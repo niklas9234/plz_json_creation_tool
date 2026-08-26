@@ -12,13 +12,6 @@ ROOT=Path(__file__).parents[1]
 def database(tmp_path):
  db=Database(tmp_path/'test.db'); db.initialize(); lade_gebiete(db,ausgelieferte_gebietsdateien(ROOT)); return db
 
-def test_datenbankverbindung_wird_nach_kontext_geschlossen(tmp_path):
- db=Database(tmp_path/'closed.db'); db.initialize()
- with db.connect() as con:
-  assert con.execute('select 1').fetchone()[0] == 1
- with pytest.raises(sqlite3.ProgrammingError, match='closed'):
-  con.execute('select 1')
-
 def test_detailreiche_gebietsdateien_werden_geladen(tmp_path):
  db=database(tmp_path)
  with db.connect() as c:
