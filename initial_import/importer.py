@@ -87,8 +87,9 @@ def importiere(csv_path: Path, db_path: Path, ueberschreiben=False) -> ImportBer
     # Bei einer neuen DB übernehmen wir den Katalog aus den ausgelieferten Dateien.
     from app.datenbank.gebiete import ausgelieferte_gebietsdateien, lade_gebiete
     lade_gebiete(db, ausgelieferte_gebietsdateien())
-    for pps, mapping in records.items():
-        try: service.speichere_unternehmen(UnternehmenEingabe(names[pps],pps,True,mapping)); report.unternehmen += 1; report.zuordnungen += sum(map(len,mapping.values()))
+    for identity, mapping in records.items():
+        pps = pps_werte[identity]
+        try: service.speichere_unternehmen(UnternehmenEingabe(names[identity],pps,True,mapping)); report.unternehmen += 1; report.zuordnungen += sum(map(len,mapping.values()))
         except Validierungsfehler as exc: report.fehler.append(f"PPS {pps}: {exc}"); report.fehlerhafte_zeilen += sum(map(len,mapping.values()))
     report.gewerke=len(trades)
     if report.fehler:
