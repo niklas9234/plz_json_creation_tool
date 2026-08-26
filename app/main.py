@@ -1,7 +1,7 @@
 import sys
 from app.config import ensure_directories
 from app.datenbank import Database
-from app.datenbank.gebiete import lade_gebiete
+from app.datenbank.gebiete import ausgelieferte_gebietsdateien, lade_gebiete
 
 
 def main():
@@ -11,8 +11,7 @@ def main():
         print("PySide6 fehlt. Installieren Sie die Abhängigkeiten mit: pip install .", file=sys.stderr); return 1
     paths=ensure_directories(); db=Database(paths['daten']/ 'dienstleister.db'); db.initialize()
     if not __import__('sqlite3').connect(db.path).execute('SELECT 1 FROM gebiete LIMIT 1').fetchone():
-        from pathlib import Path
-        root=Path(__file__).resolve().parents[1]; lade_gebiete(db,[root/'gebiete/deutschland_plz2.geojson',root/'gebiete/luxemburg.geojson'])
+        lade_gebiete(db, ausgelieferte_gebietsdateien())
     app=QApplication(sys.argv); app.setApplicationName('Dienstleisterkarten')
     window=QMainWindow(); window.setWindowTitle('Dienstleisterkarten'); window.resize(1000,700)
     tabs=QTabWidget()

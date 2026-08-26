@@ -30,6 +30,6 @@ pip install -e '.[test]'
 pytest
 ```
 
-Die enthaltenen Flächen sind ein kleiner, schematischer Offline-Demodatensatz und **keine amtlichen Grenzgeometrien**. Vor Produktion sind die Dateien unter `gebiete/` durch fachlich freigegebene GeoJSON-FeatureCollections mit `properties.gebiet` zu ersetzen.
+Die Anwendung lädt die detailreichen Offline-Geometrien aus `gebiete/plz_2_gebiete.geojson` und `gebiete/luxemburg.json`. Gebietsschlüssel werden dabei aus `properties.plz` beziehungsweise `properties.gebiet` übernommen.
 
 Weitere Übergabeinformationen stehen in [`dokumentation/handbuch.md`](dokumentation/handbuch.md).
