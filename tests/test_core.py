@@ -35,12 +35,58 @@ def test_verwaltung_und_gruppierter_export(tmp_path):
 
 def test_import_merge_duplicate_and_leading_zero(tmp_path):
  csv=tmp_path/'in.csv'; csv.write_text('Gewerk;Unternehmen;PPS_Nummer;PLZ\nKran;Firma;0007;04\nKran;Firma;0007;06\nKran;Firma;0007;06\n',encoding='utf8')
- report=importiere(csv,tmp_path/'import.db'); assert (report.unternehmen,report.zuordnungen,report.duplikate)==(1,2,1)
+ report=importiere(csv,tmp_path/'import.db'); assert report.veroeffentlicht; assert (report.unternehmen,report.zuordnungen,report.duplikate)==(1,2,1)
  with sqlite3.connect(tmp_path/'import.db') as c: assert c.execute('select pps_nummer from unternehmen').fetchone()[0]=='0007'
 
 def test_import_rejects_conflict_atomically(tmp_path):
  csv=tmp_path/'in.csv'; csv.write_text('Gewerk;Unternehmen;PPS_Nummer;PLZ\nKran;A;1;04\nKran;B;1;06\n',encoding='utf8')
- report=importiere(csv,tmp_path/'import.db'); assert report.fehlerhafte_zeilen==1; assert not (tmp_path/'import.db').exists()
+ report=importiere(csv,tmp_path/'import.db'); assert not report.veroeffentlicht; assert report.fehlerhafte_zeilen==1; assert not (tmp_path/'import.db').exists()
+
+def test_import_ersetzt_leere_von_der_app_initialisierte_datenbank(tmp_path):
+ ziel=tmp_path/'leer.db'; Database(ziel).initialize(); lade_gebiete(Database(ziel),ausgelieferte_gebietsdateien(ROOT))
+ csv=tmp_path/'in.csv'; csv.write_text('Gewerk;Unternehmen;PPS_Nummer;PLZ\nKran;Firma;123;04\n',encoding='utf8')
+ report=importiere(csv,ziel)
+ assert report.veroeffentlicht
+ with sqlite3.connect(ziel) as con:
+  assert con.execute('select count(*) from unternehmen').fetchone()[0]==1
+
+def test_import_schuetzt_vorhandene_fachdaten_ohne_ueberschreiben(tmp_path):
+ ziel=tmp_path/'bestand.db'; db=database(tmp_path); ziel=db.path
+ Verwaltung(db).speichere_unternehmen(UnternehmenEingabe('Bestand','123',True,{'Kran':{'04'}}))
+ csv=tmp_path/'in.csv'; csv.write_text('Gewerk;Unternehmen;PPS_Nummer;PLZ\nKran;Neu;456;06\n',encoding='utf8')
+ with pytest.raises(FileExistsError,match='bereits Unternehmen'):
+  importiere(csv,ziel)
+
+def test_import_trennt_firmen_mit_null_pps_und_ueberspringt_nicht_vergebene_plz2(tmp_path):
+ csv=tmp_path/'in.csv'
+ csv.write_text('Gewerk;Unternehmen;PPS_Nummer;PLZ\nKran;Ohne Nummer A;0;04\nKran;Ohne Nummer B;0;06\nKran;Firma;123;05\nKran;Firma;123;11\nKran;Firma;123;43\nKran;Firma;123;62\nKran;Firma;123;04\n',encoding='utf8')
+ report=importiere(csv,tmp_path/'import.db')
+ assert not report.fehler
+ assert (report.unternehmen,report.zuordnungen,report.uebersprungene_zeilen)==(3,3,4)
+ assert any('05' in hinweis and '11' in hinweis and '43' in hinweis and '62' in hinweis for hinweis in report.hinweise)
+ with sqlite3.connect(tmp_path/'import.db') as c:
+  assert c.execute('select name,pps_nummer from unternehmen order by name').fetchall()==[('Firma','123'),('Ohne Nummer A','0'),('Ohne Nummer B','0')]
+
+def test_datenbank_erlaubt_mehrere_null_pps_ohne_echte_duplikate_zuzulassen(tmp_path):
+ db=database(tmp_path)
+ v=Verwaltung(db)
+ v.speichere_unternehmen(UnternehmenEingabe('A','0',True,{'Kran':{'04'}}))
+ v.speichere_unternehmen(UnternehmenEingabe('B','0',True,{'Kran':{'06'}}))
+ v.speichere_unternehmen(UnternehmenEingabe('C','123',True,{'Kran':{'04'}}))
+ with pytest.raises(ValueError, match='PPS-Nummer'):
+  v.speichere_unternehmen(UnternehmenEingabe('D','123',True,{'Kran':{'06'}}))
+
+def test_schema_version_eins_wird_fuer_null_pps_migriert(tmp_path):
+ path=tmp_path/'alt.db'
+ with sqlite3.connect(path) as con:
+  con.executescript("""CREATE TABLE schema_version(version INTEGER NOT NULL); INSERT INTO schema_version VALUES (1);
+   CREATE TABLE unternehmen(id INTEGER PRIMARY KEY,name TEXT NOT NULL,pps_nummer TEXT NOT NULL UNIQUE,aktiv INTEGER NOT NULL DEFAULT 1,erstellt_am TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,geaendert_am TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+   INSERT INTO unternehmen(name,pps_nummer) VALUES ('Bestehend','123');""")
+ db=Database(path); db.initialize(); lade_gebiete(db,ausgelieferte_gebietsdateien(ROOT))
+ with db.connect() as con:
+  assert con.execute('select version from schema_version').fetchone()[0]==2
+ Verwaltung(db).speichere_unternehmen(UnternehmenEingabe('Ohne Nummer A','0',True,{'Kran':{'04'}}))
+ Verwaltung(db).speichere_unternehmen(UnternehmenEingabe('Ohne Nummer B','0',True,{'Kran':{'06'}}))
 
 def test_backup_restore(tmp_path):
  db=database(tmp_path); backup=BackupService(db,tmp_path/'backups'); saved=backup.erstellen()
