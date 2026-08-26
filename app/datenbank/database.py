@@ -1,5 +1,7 @@
 from __future__ import annotations
+from contextlib import contextmanager
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 
 SCHEMA_VERSION = 1
@@ -42,12 +44,24 @@ class Database:
     def __init__(self, path: str | Path):
         self.path = Path(path)
 
-    def connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
+        """Öffnet eine transaktionale Verbindung und schließt sie garantiert.
+
+        Der Kontextmanager von ``sqlite3.Connection`` schreibt beziehungsweise
+        verwirft lediglich die Transaktion; er schließt die Verbindung nicht.
+        Das explizite ``close`` ist insbesondere unter Windows nötig, bevor eine
+        Datenbankdatei gelöscht oder umbenannt werden kann.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         con = sqlite3.connect(self.path)
         con.row_factory = sqlite3.Row
         con.execute("PRAGMA foreign_keys=ON")
-        return con
+        try:
+            with con:
+                yield con
+        finally:
+            con.close()
 
     def initialize(self) -> None:
         with self.connect() as con:

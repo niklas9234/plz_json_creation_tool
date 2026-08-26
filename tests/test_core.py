@@ -2,7 +2,7 @@ import json, sqlite3
 from pathlib import Path
 import pytest
 from app.datenbank import Database
-from app.datenbank.gebiete import lade_gebiete
+from app.datenbank.gebiete import ausgelieferte_gebietsdateien, lade_gebiete
 from app.services import Verwaltung, BackupService
 from app.modelle import UnternehmenEingabe
 from app.geojson_export import GeoJSONExporter, dateiname_fuer_gewerk
@@ -10,7 +10,24 @@ from initial_import.importer import importiere
 
 ROOT=Path(__file__).parents[1]
 def database(tmp_path):
- db=Database(tmp_path/'test.db'); db.initialize(); lade_gebiete(db,[ROOT/'gebiete/deutschland_plz2.geojson',ROOT/'gebiete/luxemburg.geojson']); return db
+ db=Database(tmp_path/'test.db'); db.initialize(); lade_gebiete(db,ausgelieferte_gebietsdateien(ROOT)); return db
+
+def test_datenbankverbindung_wird_nach_kontext_geschlossen(tmp_path):
+ db=Database(tmp_path/'closed.db'); db.initialize()
+ with db.connect() as con:
+  assert con.execute('select 1').fetchone()[0] == 1
+ with pytest.raises(sqlite3.ProgrammingError, match='closed'):
+  con.execute('select 1')
+
+def test_detailreiche_gebietsdateien_werden_geladen(tmp_path):
+ db=database(tmp_path)
+ with db.connect() as c:
+  assert c.execute('select count(*) from gebiete').fetchone()[0] == 96
+  deutschland=json.loads(c.execute("select geometrie from gebiete where schluessel='04'").fetchone()[0])
+  luxemburg=json.loads(c.execute("select geometrie from gebiete where schluessel='LUX'").fetchone()[0])
+  assert len(deutschland['coordinates'][0]) > 100
+  assert deutschland['type'] == 'Polygon'
+  assert luxemburg['type'] == 'MultiPolygon'
 
 def test_verwaltung_und_gruppierter_export(tmp_path):
  db=database(tmp_path); v=Verwaltung(db)
@@ -31,6 +48,17 @@ def test_import_merge_duplicate_and_leading_zero(tmp_path):
 def test_import_rejects_conflict_atomically(tmp_path):
  csv=tmp_path/'in.csv'; csv.write_text('Gewerk;Unternehmen;PPS_Nummer;PLZ\nKran;A;1;04\nKran;B;1;06\n',encoding='utf8')
  report=importiere(csv,tmp_path/'import.db'); assert report.fehlerhafte_zeilen==1; assert not (tmp_path/'import.db').exists()
+
+def test_import_ueberspringt_null_pps_und_nicht_vergebene_plz2(tmp_path):
+ csv=tmp_path/'in.csv'
+ csv.write_text('Gewerk;Unternehmen;PPS_Nummer;PLZ\nKran;Ohne Nummer A;0;04\nKran;Ohne Nummer B;0;06\nKran;Firma;123;05\nKran;Firma;123;11\nKran;Firma;123;43\nKran;Firma;123;62\nKran;Firma;123;04\n',encoding='utf8')
+ report=importiere(csv,tmp_path/'import.db')
+ assert not report.fehler
+ assert (report.unternehmen,report.zuordnungen,report.uebersprungene_zeilen)==(1,1,6)
+ assert any('PPS-Nummer 0' in hinweis for hinweis in report.hinweise)
+ assert any('05' in hinweis and '11' in hinweis and '43' in hinweis and '62' in hinweis for hinweis in report.hinweise)
+ with sqlite3.connect(tmp_path/'import.db') as c:
+  assert c.execute('select name,pps_nummer from unternehmen').fetchall()==[('Firma','123')]
 
 def test_backup_restore(tmp_path):
  db=database(tmp_path); backup=BackupService(db,tmp_path/'backups'); saved=backup.erstellen()

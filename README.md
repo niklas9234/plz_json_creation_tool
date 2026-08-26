@@ -23,6 +23,8 @@ dienstleisterkarten-import --datenbank daten/dienstleister.db
 
 Eine vorhandene Datenbank wird abgelehnt. Nur für eine bewusst wiederholte Entwicklungsübernahme ist `--ueberschreiben` vorgesehen. Bei fachlichen Fehlern wird keine Zieldatenbank veröffentlicht.
 
+Zeilen mit der Platzhalter-PPS-Nummer `0` werden übersprungen, da `0` keine Firma eindeutig identifiziert. Ebenso werden die nicht vergebenen deutschen PLZ-2-Bereiche `05`, `11`, `43` und `62` übersprungen, für die keine geografische Fläche existiert. Der Importbericht weist die Anzahl dieser Zeilen separat aus; alle übrigen Zuordnungen derselben Firma werden weiterhin importiert.
+
 ## Entwicklung
 
 ```bash
@@ -30,6 +32,6 @@ pip install -e '.[test]'
 pytest
 ```
 
-Die enthaltenen Flächen sind ein kleiner, schematischer Offline-Demodatensatz und **keine amtlichen Grenzgeometrien**. Vor Produktion sind die Dateien unter `gebiete/` durch fachlich freigegebene GeoJSON-FeatureCollections mit `properties.gebiet` zu ersetzen.
+Die Anwendung lädt die detailreichen Offline-Geometrien aus `gebiete/plz_2_gebiete.geojson` und `gebiete/luxemburg.json`. Gebietsschlüssel werden dabei aus `properties.plz` beziehungsweise `properties.gebiet` übernommen.
 
 Weitere Übergabeinformationen stehen in [`dokumentation/handbuch.md`](dokumentation/handbuch.md).

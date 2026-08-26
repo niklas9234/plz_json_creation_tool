@@ -8,6 +8,10 @@ Unternehmen werden über PPS-Nummern eindeutig identifiziert, können mehrere Ge
 
 SQLite speichert `unternehmen`, `gewerke`, den n:m-Bezug `unternehmen_gewerke`, `gebiete`, dreiteilige `gebietszuordnungen` sowie `export_protokoll`. Fremdschlüssel, Eindeutigkeitsbedingungen und Transaktionen verhindern verwaiste beziehungsweise doppelte Zuordnungen. Geometrien werden als GeoJSON in `gebiete.geometrie` abgelegt.
 
+Beim erstmaligen Anlegen der Datenbank werden die detailreichen Gebietsdateien `gebiete/plz_2_gebiete.geojson` und `gebiete/luxemburg.json` eingelesen. Der Deutschland-Datensatz verwendet `properties.plz`, der Luxemburg-Datensatz `properties.gebiet`; beide Varianten werden vom Gebietslader unterstützt.
+
+Beim CSV-Import gilt die PPS-Nummer `0` als Platzhalter und wird übersprungen, statt verschiedene Unternehmen fälschlich zusammenzuführen. Die im deutschen Postleitzahlensystem nicht vergebenen PLZ-2-Werte `05`, `11`, `43` und `62` haben keine Geometrie und werden ebenfalls übersprungen. Beide Fälle erscheinen als Hinweise im Importbericht und verhindern den Import der übrigen gültigen Zeilen nicht.
+
 ## Sicherung
 
 Sicherungen tragen einen Zeitstempel. Vor jeder Wiederherstellung erstellt der Service automatisch eine Vorsicherung. Die Oberfläche muss vor dem Ersetzen des Bestands eine Bestätigung abfragen.
@@ -31,4 +35,4 @@ Die Ordner `gebiete`, `daten`, `exporte` und `sicherungen` neben dem Auslieferun
 
 ## Test- und Übergabehinweis
 
-`pytest` prüft Importzusammenführung, führende Nullen, Duplikate, Konflikte, gruppierten Einzel-Export, Inaktivfilter, Dateinamen sowie Sicherung/Wiederherstellung. Vor Abnahme sind fachlich freigegebene reale Grenzgeometrien einzuspielen und ein Testimport in die eingesetzte uMap-Version durchzuführen.
+`pytest` prüft Importzusammenführung, führende Nullen, Duplikate, Konflikte, das Laden der detailreichen Grenzgeometrien, gruppierten Einzel-Export, Inaktivfilter, Dateinamen sowie Sicherung/Wiederherstellung. Vor Abnahme ist ein Testimport in die eingesetzte uMap-Version durchzuführen.
