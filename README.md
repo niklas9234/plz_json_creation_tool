@@ -21,7 +21,9 @@ Eine kontrollierte CSV mit exakt `Gewerk;Unternehmen;PPS_Nummer;PLZ` nach `initi
 dienstleisterkarten-import --datenbank daten/dienstleister.db
 ```
 
-Eine vorhandene Datenbank wird abgelehnt. Nur für eine bewusst wiederholte Entwicklungsübernahme ist `--ueberschreiben` vorgesehen. Bei fachlichen Fehlern wird keine Zieldatenbank veröffentlicht.
+Eine von der App lediglich mit Gebietsgeometrien initialisierte, ansonsten leere Datenbank kann direkt befüllt werden. Enthält sie bereits Unternehmen oder Gewerke, wird sie abgelehnt; für einen bewusst vollständigen Neuimport ist `--ueberschreiben` erforderlich. Bei fachlichen Fehlern wird keine Zieldatenbank veröffentlicht. Die Konsolenausgabe nennt CSV- und Datenbankpfad sowie eindeutig `ERFOLGREICH` oder `NICHT IMPORTIERT`.
+
+Bei der Platzhalter-PPS-Nummer `0` unterscheidet der Import Unternehmen zusätzlich anhand ihres Namens, sodass diese Datensätze vollständig erhalten bleiben und nicht fälschlich zusammengeführt werden. Für alle anderen PPS-Nummern bleibt die Eindeutigkeitsprüfung bestehen. Die nicht vergebenen deutschen PLZ-2-Bereiche `05`, `11`, `43` und `62` werden übersprungen, weil dafür keine geografische Fläche existiert; alle übrigen Zuordnungen derselben Firma werden weiterhin importiert.
 
 ## Entwicklung
 
@@ -30,6 +32,6 @@ pip install -e '.[test]'
 pytest
 ```
 
-Die enthaltenen Flächen sind ein kleiner, schematischer Offline-Demodatensatz und **keine amtlichen Grenzgeometrien**. Vor Produktion sind die Dateien unter `gebiete/` durch fachlich freigegebene GeoJSON-FeatureCollections mit `properties.gebiet` zu ersetzen.
+Die Anwendung lädt die detailreichen Offline-Geometrien aus `gebiete/plz_2_gebiete.geojson` und `gebiete/luxemburg.json`. Gebietsschlüssel werden dabei aus `properties.plz` beziehungsweise `properties.gebiet` übernommen.
 
 Weitere Übergabeinformationen stehen in [`dokumentation/handbuch.md`](dokumentation/handbuch.md).
