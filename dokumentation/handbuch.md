@@ -10,7 +10,7 @@ SQLite speichert `unternehmen`, `gewerke`, den n:m-Bezug `unternehmen_gewerke`, 
 
 Beim erstmaligen Anlegen der Datenbank werden die detailreichen Gebietsdateien `gebiete/plz_2_gebiete.geojson` und `gebiete/luxemburg.json` eingelesen. Der Deutschland-Datensatz verwendet `properties.plz`, der Luxemburg-Datensatz `properties.gebiet`; beide Varianten werden vom Gebietslader unterstützt.
 
-Beim CSV-Import gilt die PPS-Nummer `0` als Platzhalter und wird übersprungen, statt verschiedene Unternehmen fälschlich zusammenzuführen. Die im deutschen Postleitzahlensystem nicht vergebenen PLZ-2-Werte `05`, `11`, `43` und `62` haben keine Geometrie und werden ebenfalls übersprungen. Beide Fälle erscheinen als Hinweise im Importbericht und verhindern den Import der übrigen gültigen Zeilen nicht.
+Beim CSV-Import gilt die PPS-Nummer `0` als nicht eindeutiger Platzhalter. Solche Datensätze werden nicht verworfen: Der Firmenname dient zusätzlich zur Unterscheidung, während echte PPS-Nummern weiterhin eindeutig sein müssen. Die im deutschen Postleitzahlensystem nicht vergebenen PLZ-2-Werte `05`, `11`, `43` und `62` haben keine Geometrie und werden übersprungen. Sie erscheinen als Hinweis im Importbericht und verhindern den Import der übrigen gültigen Zeilen nicht.
 
 ## Sicherung
 
