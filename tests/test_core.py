@@ -2,7 +2,7 @@ import json, sqlite3
 from pathlib import Path
 import pytest
 from app.datenbank import Database
-from app.datenbank.gebiete import lade_gebiete
+from app.datenbank.gebiete import ausgelieferte_gebietsdateien, lade_gebiete
 from app.services import Verwaltung, BackupService
 from app.modelle import UnternehmenEingabe
 from app.geojson_export import GeoJSONExporter, dateiname_fuer_gewerk
@@ -10,7 +10,17 @@ from initial_import.importer import importiere
 
 ROOT=Path(__file__).parents[1]
 def database(tmp_path):
- db=Database(tmp_path/'test.db'); db.initialize(); lade_gebiete(db,[ROOT/'gebiete/deutschland_plz2.geojson',ROOT/'gebiete/luxemburg.geojson']); return db
+ db=Database(tmp_path/'test.db'); db.initialize(); lade_gebiete(db,ausgelieferte_gebietsdateien(ROOT)); return db
+
+def test_detailreiche_gebietsdateien_werden_geladen(tmp_path):
+ db=database(tmp_path)
+ with db.connect() as c:
+  assert c.execute('select count(*) from gebiete').fetchone()[0] == 96
+  deutschland=json.loads(c.execute("select geometrie from gebiete where schluessel='04'").fetchone()[0])
+  luxemburg=json.loads(c.execute("select geometrie from gebiete where schluessel='LUX'").fetchone()[0])
+  assert len(deutschland['coordinates'][0]) > 100
+  assert deutschland['type'] == 'Polygon'
+  assert luxemburg['type'] == 'MultiPolygon'
 
 def test_verwaltung_und_gruppierter_export(tmp_path):
  db=database(tmp_path); v=Verwaltung(db)
