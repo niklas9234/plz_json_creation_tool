@@ -1,0 +1,62 @@
+from __future__ import annotations
+import sqlite3
+from pathlib import Path
+
+SCHEMA_VERSION = 1
+
+SCHEMA = """
+PRAGMA foreign_keys=ON;
+CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS unternehmen (
+ id INTEGER PRIMARY KEY, name TEXT NOT NULL CHECK(trim(name) <> ''),
+ pps_nummer TEXT NOT NULL UNIQUE CHECK(trim(pps_nummer) <> ''), aktiv INTEGER NOT NULL DEFAULT 1 CHECK(aktiv IN (0,1)),
+ erstellt_am TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, geaendert_am TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS gewerke (
+ id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(trim(name) <> ''), aktiv INTEGER NOT NULL DEFAULT 1 CHECK(aktiv IN (0,1))
+);
+CREATE TABLE IF NOT EXISTS gebiete (
+ schluessel TEXT PRIMARY KEY, anzeigename TEXT NOT NULL, typ TEXT NOT NULL CHECK(typ IN ('PLZ2','LAND','REGION')),
+ geometrie TEXT NOT NULL, label_lon REAL, label_lat REAL
+);
+CREATE TABLE IF NOT EXISTS unternehmen_gewerke (
+ unternehmen_id INTEGER NOT NULL REFERENCES unternehmen(id) ON DELETE CASCADE,
+ gewerk_id INTEGER NOT NULL REFERENCES gewerke(id) ON DELETE RESTRICT,
+ PRIMARY KEY(unternehmen_id, gewerk_id)
+);
+CREATE TABLE IF NOT EXISTS gebietszuordnungen (
+ unternehmen_id INTEGER NOT NULL, gewerk_id INTEGER NOT NULL, gebiet_schluessel TEXT NOT NULL REFERENCES gebiete(schluessel) ON DELETE RESTRICT,
+ PRIMARY KEY(unternehmen_id, gewerk_id, gebiet_schluessel),
+ FOREIGN KEY(unternehmen_id, gewerk_id) REFERENCES unternehmen_gewerke(unternehmen_id, gewerk_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS export_protokoll (
+ id INTEGER PRIMARY KEY, gewerk_id INTEGER NOT NULL REFERENCES gewerke(id) ON DELETE RESTRICT,
+ zeitpunkt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, dateiname TEXT NOT NULL, speicherort TEXT NOT NULL, ergebnis TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_unternehmen_name ON unternehmen(name);
+CREATE INDEX IF NOT EXISTS idx_zuordnung_gewerk ON gebietszuordnungen(gewerk_id, gebiet_schluessel);
+"""
+
+
+class Database:
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+
+    def connect(self) -> sqlite3.Connection:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        con = sqlite3.connect(self.path)
+        con.row_factory = sqlite3.Row
+        con.execute("PRAGMA foreign_keys=ON")
+        return con
+
+    def initialize(self) -> None:
+        with self.connect() as con:
+            con.executescript(SCHEMA)
+            row = con.execute("SELECT version FROM schema_version").fetchone()
+            if row is None:
+                con.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
+            elif row[0] != SCHEMA_VERSION:
+                raise RuntimeError(f"Nicht unterstützte Datenbankversion {row[0]}.")
+
+    def transaction(self):
+        return self.connect()
