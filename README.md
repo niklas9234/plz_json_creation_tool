@@ -23,6 +23,8 @@ dienstleisterkarten-import --datenbank daten/dienstleister.db
 
 Eine vorhandene Datenbank wird abgelehnt. Nur für eine bewusst wiederholte Entwicklungsübernahme ist `--ueberschreiben` vorgesehen. Bei fachlichen Fehlern wird keine Zieldatenbank veröffentlicht.
 
+Bei der Platzhalter-PPS-Nummer `0` unterscheidet der Import Unternehmen zusätzlich anhand ihres Namens, sodass diese Datensätze vollständig erhalten bleiben und nicht fälschlich zusammengeführt werden. Für alle anderen PPS-Nummern bleibt die Eindeutigkeitsprüfung bestehen. Die nicht vergebenen deutschen PLZ-2-Bereiche `05`, `11`, `43` und `62` werden übersprungen, weil dafür keine geografische Fläche existiert; alle übrigen Zuordnungen derselben Firma werden weiterhin importiert.
+
 ## Entwicklung
 
 ```bash
