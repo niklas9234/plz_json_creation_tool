@@ -1,5 +1,7 @@
 from datetime import datetime
+from contextlib import closing
 from pathlib import Path
+import sqlite3
 import shutil
 from app.datenbank import Database
 
@@ -14,7 +16,8 @@ class BackupService:
         while ziel.exists():
             ziel = self.ordner / f"{basis}_{nummer}.db"
             nummer += 1
-        with self.db.connect() as quelle, __import__('sqlite3').connect(ziel) as dest: quelle.backup(dest)
+        with self.db.connect() as quelle, closing(sqlite3.connect(ziel)) as dest:
+            quelle.backup(dest)
         return ziel
     def wiederherstellen(self, quelle: Path) -> Path:
         quelle = Path(quelle)

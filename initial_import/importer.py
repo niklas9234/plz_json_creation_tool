@@ -51,9 +51,8 @@ def importiere(csv_path: Path, db_path: Path, ueberschreiben=False) -> ImportBer
     db=Database(temp); db.initialize(); service=Verwaltung(db)
     # Importiert werden können nur zuvor mit echten Geometrien geladene Gebiete.
     # Bei einer neuen DB übernehmen wir den Katalog aus den ausgelieferten Dateien.
-    from app.datenbank.gebiete import lade_gebiete
-    root=Path(__file__).resolve().parents[1]
-    lade_gebiete(db, [root/"gebiete"/"deutschland_plz2.geojson", root/"gebiete"/"luxemburg.geojson"])
+    from app.datenbank.gebiete import ausgelieferte_gebietsdateien, lade_gebiete
+    lade_gebiete(db, ausgelieferte_gebietsdateien())
     for pps, mapping in records.items():
         try: service.speichere_unternehmen(UnternehmenEingabe(names[pps],pps,True,mapping)); report.unternehmen += 1; report.zuordnungen += sum(map(len,mapping.values()))
         except Validierungsfehler as exc: report.fehler.append(f"PPS {pps}: {exc}"); report.fehlerhafte_zeilen += sum(map(len,mapping.values()))
