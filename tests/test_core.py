@@ -95,3 +95,18 @@ def test_backup_restore(tmp_path):
  with db.connect() as c: assert c.execute("select count(*) from gewerke").fetchone()[0]==0
 
 def test_filename(): assert dateiname_fuer_gewerk('Maler & Lackierer')=='maler-und-lackierer.geojson'
+
+def test_bestandslisten_zeigen_importierte_daten(tmp_path, monkeypatch):
+ monkeypatch.setenv('QT_QPA_PLATFORM','offscreen')
+ pytest.importorskip('PySide6')
+ from PySide6.QtWidgets import QApplication
+ from app.ui.bestandslisten import GewerkeListe, UnternehmenListe
+ app=QApplication.instance() or QApplication([])
+ db=database(tmp_path); v=Verwaltung(db)
+ v.speichere_unternehmen(UnternehmenEingabe('Sichtbar GmbH','0042',True,{'Kran':{'04','06'}}))
+ unternehmen=UnternehmenListe(db); gewerke=GewerkeListe(db)
+ assert unternehmen.tabelle.rowCount()==1
+ assert [unternehmen.tabelle.item(0,column).text() for column in range(5)]==['Sichtbar GmbH','0042','Ja','Kran','2']
+ assert gewerke.tabelle.rowCount()==1
+ assert [gewerke.tabelle.item(0,column).text() for column in range(4)]==['Kran','Ja','1','2']
+ unternehmen.deleteLater(); gewerke.deleteLater(); app.processEvents()
