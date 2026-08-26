@@ -35,3 +35,10 @@ pytest
 Die Anwendung lädt die detailreichen Offline-Geometrien aus `gebiete/plz_2_gebiete.geojson` und `gebiete/luxemburg.json`. Gebietsschlüssel werden dabei aus `properties.plz` beziehungsweise `properties.gebiet` übernommen.
 
 Weitere Übergabeinformationen stehen in [`dokumentation/handbuch.md`](dokumentation/handbuch.md).
+
+
+## Alternative: Datenbank manuell vollständig löschen
+
+```bash
+Remove-Item "$env:LOCALAPPDATA\Dienstleisterkarten\daten\dienstleister.db"
+```
