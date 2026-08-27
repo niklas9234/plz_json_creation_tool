@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -23,6 +25,7 @@ from app.datenbank import Database
 from app.modelle import UnternehmenEingabe
 from app.services import Verwaltung
 from app.validierung import Validierungsfehler
+from app.ui.gebietskarte import Gebietskarte
 
 
 def _item(text: object, sort_value: object | None = None) -> QTableWidgetItem:
@@ -91,8 +94,108 @@ class UnternehmenListe(Bestandsliste):
         self.layout().itemAt(0).layout().insertWidget(2, neu)
         self.layout().itemAt(0).layout().insertWidget(3, bearbeiten)
         self.tabelle.doubleClicked.connect(self.bearbeiten)
+        self.tabelle.itemSelectionChanged.connect(self._auswahl_laden)
         self.suche.setPlaceholderText("Unternehmen oder PPS-Nummer suchen …")
+        self._detail_aufbauen()
         self.laden()
+
+    def _detail_aufbauen(self) -> None:
+        root = self.layout()
+        controls = root.takeAt(0).layout()
+        root.takeAt(0)
+        liste = QWidget()
+        listen_layout = QVBoxLayout(liste)
+        listen_layout.setContentsMargins(0, 0, 0, 0)
+        listen_layout.addLayout(controls)
+        listen_layout.addWidget(self.tabelle, 1)
+
+        detail = QWidget()
+        detail_layout = QVBoxLayout(detail)
+        self.detail_name = QLabel("Kein Unternehmen ausgewählt")
+        self.detail_name.setStyleSheet("font-size: 18px; font-weight: bold")
+        self.detail_pps = QLabel("PPS-Nummer: –")
+        self.detail_aktiv = QLabel("Status: –")
+        self.detail_gewerke = QLabel("Gewerke: –")
+        self.karte = Gebietskarte(nur_lesen=True)
+        self.karte.setMinimumHeight(280)
+        self.legende = QWidget()
+        self.legenden_layout = QVBoxLayout(self.legende)
+        self.legenden_layout.setContentsMargins(0, 0, 0, 0)
+        legenden_scroll = QScrollArea()
+        legenden_scroll.setWidgetResizable(True)
+        legenden_scroll.setWidget(self.legende)
+        legenden_scroll.setMaximumHeight(130)
+        self.detail_bearbeiten = QPushButton("Unternehmen bearbeiten")
+        self.detail_bearbeiten.setEnabled(False)
+        self.detail_bearbeiten.clicked.connect(self.bearbeiten)
+        for widget in (self.detail_name, self.detail_pps, self.detail_aktiv, self.detail_gewerke, self.karte, legenden_scroll, self.detail_bearbeiten):
+            detail_layout.addWidget(widget)
+        detail_layout.setStretch(4, 1)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(liste)
+        splitter.addWidget(detail)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        root.addWidget(splitter)
+        self.splitter = splitter
+
+    def _auswahl_laden(self) -> None:
+        row = self.tabelle.currentRow()
+        item = self.tabelle.item(row, 0) if row >= 0 else None
+        if item is None:
+            self._detail_leeren()
+            return
+        unternehmen_id = int(item.data(Qt.ItemDataRole.UserRole))
+        with self.db.connect() as con:
+            unternehmen = con.execute(
+                "SELECT name, pps_nummer, aktiv FROM unternehmen WHERE id=?", (unternehmen_id,)
+            ).fetchone()
+            rows = con.execute(
+                """SELECT g.name, z.gebiet_schluessel, b.geometrie
+                   FROM unternehmen_gewerke ug JOIN gewerke g ON g.id=ug.gewerk_id
+                   LEFT JOIN gebietszuordnungen z ON z.unternehmen_id=ug.unternehmen_id AND z.gewerk_id=ug.gewerk_id
+                   LEFT JOIN gebiete b ON b.schluessel=z.gebiet_schluessel
+                   WHERE ug.unternehmen_id=? ORDER BY g.name COLLATE NOCASE, z.gebiet_schluessel""",
+                (unternehmen_id,),
+            ).fetchall()
+        if unternehmen is None:
+            self._detail_leeren()
+            return
+        zuordnungen: dict[str, set[str]] = {}
+        geometrien: dict[str, object] = {}
+        for gewerk, schluessel, geometrie in rows:
+            zuordnungen.setdefault(gewerk, set())
+            if schluessel is not None:
+                zuordnungen[gewerk].add(schluessel)
+                geometrien[schluessel] = geometrie
+        self.detail_name.setText(unternehmen[0])
+        self.detail_pps.setText(f"PPS-Nummer: {unternehmen[1]}")
+        self.detail_aktiv.setText(f"Status: {'Aktiv' if unternehmen[2] else 'Inaktiv'}")
+        self.detail_gewerke.setText("Gewerke: " + (", ".join(zuordnungen) or "–"))
+        self.detail_bearbeiten.setEnabled(True)
+        self.karte.set_zuordnungen(zuordnungen, geometrien)
+        self._legende_fuellen(zuordnungen)
+
+    def _legende_fuellen(self, zuordnungen: dict[str, set[str]]) -> None:
+        while self.legenden_layout.count():
+            child = self.legenden_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        for gewerk, gebiete in zuordnungen.items():
+            checkbox = QCheckBox(f"{gewerk} ({len(gebiete)} Gebiete)")
+            checkbox.setChecked(True)
+            checkbox.toggled.connect(lambda sichtbar, name=gewerk: self.karte.set_gewerk_sichtbar(name, sichtbar))
+            self.legenden_layout.addWidget(checkbox)
+
+    def _detail_leeren(self) -> None:
+        self.detail_name.setText("Kein Unternehmen ausgewählt")
+        self.detail_pps.setText("PPS-Nummer: –")
+        self.detail_aktiv.setText("Status: –")
+        self.detail_gewerke.setText("Gewerke: –")
+        self.detail_bearbeiten.setEnabled(False)
+        self.karte.set_zuordnungen({}, {})
+        self._legende_fuellen({})
 
     def laden(self) -> None:
         text = f"%{self.suche.text().strip()}%"
@@ -115,6 +218,7 @@ class UnternehmenListe(Bestandsliste):
             [(row[1], row[2], row[3], row[4] or "–", row[5]) for row in rows],
             [row[0] for row in rows],
         )
+        self._auswahl_laden()
 
     def neu(self) -> None:
         self._dialog_oeffnen(None)
@@ -147,6 +251,8 @@ class UnternehmenDialog(QDialog):
         self.aktiv.setChecked(True)
         self.zuordnungen = QPlainTextEdit()
         self.zuordnungen.setPlaceholderText("Zum Beispiel:\nGerüstbau: 04, 06, LUX\nKran: 10")
+        self.karte = Gebietskarte(nur_lesen=False)
+        self.karte.setMinimumHeight(220)
 
         form = QFormLayout()
         form.addRow("Unternehmen:", self.name)
@@ -163,6 +269,7 @@ class UnternehmenDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(form)
         layout.addWidget(hinweis)
+        layout.addWidget(self.karte)
         layout.addWidget(buttons)
         if unternehmen_id is not None:
             self._laden()
@@ -184,6 +291,13 @@ class UnternehmenDialog(QDialog):
         self.pps_nummer.setText(row[1])
         self.aktiv.setChecked(bool(row[2]))
         self.zuordnungen.setPlainText("\n".join(f"{r[0]}: {r[1] or ''}" for r in zuordnungen))
+        gebiete = {r[0]: {x.strip() for x in (r[1] or "").split(",") if x.strip()} for r in zuordnungen}
+        schluessel = {x for werte in gebiete.values() for x in werte}
+        with self.db.connect() as con:
+            geometrien = {r[0]: r[1] for r in con.execute(
+                f"SELECT schluessel, geometrie FROM gebiete WHERE schluessel IN ({','.join('?' for _ in schluessel)})", tuple(schluessel)
+            ).fetchall()} if schluessel else {}
+        self.karte.set_zuordnungen(gebiete, geometrien)
 
     def _eingabe(self) -> UnternehmenEingabe:
         gebiete_je_gewerk: dict[str, set[str]] = {}
