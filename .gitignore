@@ -8,3 +8,5 @@ dist/
 build/
 *.spec
 exporte/*.geojson
+*.egg-info/
+*.egg-info
