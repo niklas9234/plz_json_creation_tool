@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QGraphicsScene,
     QGraphicsView,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -353,6 +354,115 @@ class UnternehmenListe(Bestandsliste):
             self.laden()
 
 
+class GebietsauswahlWidget(QWidget):
+    """Durchsuchbare Gebietsliste mit einer kompakten Karten-Zusammenfassung."""
+
+    auswahlGeaendert = Signal(set)
+
+    def __init__(self, db: Database, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.suche = QLineEdit()
+        self.suche.setPlaceholderText("Gebiet suchen …")
+        self.suche.setClearButtonEnabled(True)
+        self.gebietsliste = QListWidget()
+        self.karte = QLabel("Keine Gebiete ausgewählt")
+        self.karte.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.karte.setMinimumHeight(80)
+        self.karte.setStyleSheet("QLabel { background: #eef2f5; border: 1px solid #c7cdd1; }")
+        with db.connect() as con:
+            self._gebiete = [
+                (row[0], row[1])
+                for row in con.execute("SELECT schluessel, anzeigename FROM gebiete ORDER BY schluessel")
+            ]
+        self._auswahl: set[str] = set()
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Karte"))
+        layout.addWidget(self.karte)
+        layout.addWidget(self.suche)
+        layout.addWidget(self.gebietsliste, 1)
+        self.suche.textChanged.connect(self._liste_fuellen)
+        self.gebietsliste.itemChanged.connect(self._item_geaendert)
+        self._liste_fuellen()
+
+    def set_auswahl(self, gebiete: set[str]) -> None:
+        self._auswahl = set(gebiete)
+        self._liste_fuellen()
+        self._karte_aktualisieren()
+
+    def auswahl(self) -> set[str]:
+        return set(self._auswahl)
+
+    def _liste_fuellen(self) -> None:
+        text = self.suche.text().strip().casefold()
+        with QSignalBlocker(self.gebietsliste):
+            self.gebietsliste.clear()
+            for schluessel, anzeigename in self._gebiete:
+                if text and text not in schluessel.casefold() and text not in anzeigename.casefold():
+                    continue
+                item = QListWidgetItem(f"{schluessel} · {anzeigename}")
+                item.setData(Qt.ItemDataRole.UserRole, schluessel)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(
+                    Qt.CheckState.Checked if schluessel in self._auswahl else Qt.CheckState.Unchecked
+                )
+                self.gebietsliste.addItem(item)
+
+    def _item_geaendert(self, item: QListWidgetItem) -> None:
+        schluessel = item.data(Qt.ItemDataRole.UserRole)
+        if item.checkState() == Qt.CheckState.Checked:
+            self._auswahl.add(schluessel)
+        else:
+            self._auswahl.discard(schluessel)
+        self._karte_aktualisieren()
+        self.auswahlGeaendert.emit(set(self._auswahl))
+
+    def _karte_aktualisieren(self) -> None:
+        if self._auswahl:
+            self.karte.setText("Ausgewählt: " + ", ".join(sorted(self._auswahl)))
+        else:
+            self.karte.setText("Keine Gebiete ausgewählt")
+
+
+class GewerkAuswahlDialog(QDialog):
+    """Suchdialog für bereits in der Datenbank vorhandene Gewerke."""
+
+    def __init__(self, namen: list[str], parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Gewerk hinzufügen")
+        self.setMinimumWidth(360)
+        self.auswahl: str | None = None
+        self.suche = QLineEdit()
+        self.suche.setPlaceholderText("Vorhandene Gewerke durchsuchen …")
+        self.suche.setClearButtonEnabled(True)
+        self.liste = QListWidget()
+        self._namen = namen
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Hinzufügen")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Abbrechen")
+        buttons.accepted.connect(self._annehmen)
+        buttons.rejected.connect(self.reject)
+        self.suche.textChanged.connect(self._fuellen)
+        self.liste.itemDoubleClicked.connect(lambda _item: self._annehmen())
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.suche)
+        layout.addWidget(self.liste)
+        layout.addWidget(buttons)
+        self._fuellen()
+
+    def _fuellen(self) -> None:
+        text = self.suche.text().strip().casefold()
+        self.liste.clear()
+        self.liste.addItems(name for name in self._namen if text in name.casefold())
+        if self.liste.count():
+            self.liste.setCurrentRow(0)
+
+    def _annehmen(self) -> None:
+        if self.liste.currentItem() is None:
+            return
+        self.auswahl = self.liste.currentItem().text()
+        self.accept()
+
+
 class UnternehmenDialog(QDialog):
     """Editor, der Änderungen erst nach einer ausdrücklichen Bestätigung speichert."""
 
@@ -382,10 +492,12 @@ class UnternehmenDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout = QVBoxLayout(self)
         layout.addLayout(form)
+        layout.addLayout(zuordnungs_layout, 1)
         layout.addWidget(hinweis)
         layout.addWidget(buttons)
         if unternehmen_id is not None:
             self._laden()
+        self._gewerkliste_aktualisieren()
 
     def _laden(self) -> None:
         with self.db.connect() as con:
