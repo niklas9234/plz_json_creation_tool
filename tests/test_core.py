@@ -114,20 +114,51 @@ def test_bestandslisten_zeigen_importierte_daten(tmp_path, monkeypatch):
 def test_unternehmen_editor_speichert_erst_nach_bestaetigung(tmp_path, monkeypatch):
  monkeypatch.setenv('QT_QPA_PLATFORM','offscreen')
  pytest.importorskip('PySide6')
- from PySide6.QtWidgets import QApplication, QMessageBox
- from app.ui.bestandslisten import UnternehmenDialog
+ from PySide6.QtWidgets import QApplication, QDialog
+ from app.ui.bestandslisten import UnternehmenBestaetigungsdialog, UnternehmenDialog
  app=QApplication.instance() or QApplication([])
  db=database(tmp_path)
  dialog=UnternehmenDialog(db,None)
  dialog.name.setText('Neue Firma')
  dialog.pps_nummer.setText('007')
  dialog.zuordnungen.setPlainText('Kran: 04, LUX')
- monkeypatch.setattr(QMessageBox,'question',lambda *args,**kwargs: QMessageBox.StandardButton.No)
+ monkeypatch.setattr(UnternehmenBestaetigungsdialog,'exec',lambda self: QDialog.DialogCode.Rejected)
  dialog.speichern()
  with db.connect() as con: assert con.execute('select count(*) from unternehmen').fetchone()[0]==0
- monkeypatch.setattr(QMessageBox,'question',lambda *args,**kwargs: QMessageBox.StandardButton.Yes)
+ monkeypatch.setattr(UnternehmenBestaetigungsdialog,'exec',lambda self: QDialog.DialogCode.Accepted)
  dialog.speichern()
  with db.connect() as con:
   assert con.execute('select name,pps_nummer from unternehmen').fetchone()==('Neue Firma','007')
   assert {row[0] for row in con.execute('select gebiet_schluessel from gebietszuordnungen')}=={'04','LUX'}
+ dialog.deleteLater(); app.processEvents()
+
+def test_unternehmen_editor_validiert_vor_bestaetigungsdialog(tmp_path, monkeypatch):
+ monkeypatch.setenv('QT_QPA_PLATFORM','offscreen')
+ pytest.importorskip('PySide6')
+ from PySide6.QtWidgets import QApplication, QMessageBox
+ from app.ui.bestandslisten import UnternehmenBestaetigungsdialog, UnternehmenDialog
+ app=QApplication.instance() or QApplication([])
+ dialog=UnternehmenDialog(database(tmp_path),None)
+ dialog.name.setText('Ohne Zuordnung'); dialog.pps_nummer.setText('008')
+ geoeffnet=[]
+ monkeypatch.setattr(UnternehmenBestaetigungsdialog,'exec',lambda self: geoeffnet.append(True))
+ monkeypatch.setattr(QMessageBox,'warning',lambda *args,**kwargs: None)
+ dialog.speichern()
+ assert not geoeffnet
+ dialog.deleteLater(); app.processEvents()
+
+def test_bestaetigungsdialog_zeigt_aenderungen_und_eindeutige_aktionen(tmp_path, monkeypatch):
+ monkeypatch.setenv('QT_QPA_PLATFORM','offscreen')
+ pytest.importorskip('PySide6')
+ from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QTableWidget
+ from app.ui.bestandslisten import UnternehmenBestaetigungsdialog
+ app=QApplication.instance() or QApplication([])
+ vorher=UnternehmenEingabe('Firma','7',True,{'Kran':{'04'},'Alt':{'06'}})
+ aktuell=UnternehmenEingabe('Firma','7',False,{'Kran':{'LUX'},'Neu':{'04'}})
+ dialog=UnternehmenBestaetigungsdialog(aktuell,vorher)
+ texte='\n'.join(widget.text() for widget in dialog.findChildren(QLabel))
+ assert all(text in texte for text in ('Inaktiv','Neu','Alt','Kran: LUX','Kran: 04'))
+ tabelle=dialog.findChild(QTableWidget)
+ assert {(tabelle.item(row,0).text(),tabelle.item(row,1).text()) for row in range(tabelle.rowCount())}=={('Kran','LUX'),('Neu','04')}
+ assert {button.text() for button in dialog.findChildren(QPushButton)} >= {'Zurück zum Bearbeiten','Verbindlich speichern'}
  dialog.deleteLater(); app.processEvents()

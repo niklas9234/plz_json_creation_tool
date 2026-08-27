@@ -574,6 +574,7 @@ class UnternehmenDialog(QDialog):
         super().__init__(parent)
         self.db = db
         self.unternehmen_id = unternehmen_id
+        self.ausgangseingabe: UnternehmenEingabe | None = None
         self.setWindowTitle("Unternehmen bearbeiten" if unternehmen_id is not None else "Unternehmen anlegen")
         self.setMinimumSize(980, 560)
         self.name = QLineEdit()
@@ -635,17 +636,12 @@ class UnternehmenDialog(QDialog):
     def speichern(self) -> None:
         try:
             eingabe = self._eingabe()
+            validiere_unternehmen(eingabe, Verwaltung(self.db).gebietsschluessel())
         except Validierungsfehler as exc:
             QMessageBox.warning(self, "Angaben prüfen", str(exc))
             return
-        antwort = QMessageBox.question(
-            self,
-            "Änderungen bestätigen",
-            "Sind die eingegebenen Inhalte so richtig und sollen sie gespeichert werden?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if antwort != QMessageBox.StandardButton.Yes:
+        bestaetigung = UnternehmenBestaetigungsdialog(eingabe, self.ausgangseingabe, self)
+        if bestaetigung.exec() != QDialog.DialogCode.Accepted:
             return
         try:
             Verwaltung(self.db).speichere_unternehmen(eingabe, self.unternehmen_id)
@@ -653,6 +649,83 @@ class UnternehmenDialog(QDialog):
             QMessageBox.warning(self, "Speichern nicht möglich", str(exc))
             return
         self.accept()
+
+
+class UnternehmenBestaetigungsdialog(QDialog):
+    """Nicht editierbare Zusammenfassung vor dem verbindlichen Speichern."""
+
+    def __init__(
+        self,
+        eingabe: UnternehmenEingabe,
+        ausgangseingabe: UnternehmenEingabe | None,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("Unternehmen verbindlich speichern")
+        self.setMinimumWidth(560)
+
+        form = QFormLayout()
+        form.addRow("Unternehmen:", self._wert(eingabe.name))
+        form.addRow("PPS-Nummer:", self._wert(eingabe.pps_nummer))
+        form.addRow("Aktivstatus:", self._wert("Aktiv" if eingabe.aktiv else "Inaktiv"))
+
+        zuordnungen = QTableWidget(len(eingabe.gebiete_je_gewerk), 2)
+        zuordnungen.setHorizontalHeaderLabels(["Gewerk", "Ausgewählte Gebiete"])
+        zuordnungen.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        zuordnungen.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        zuordnungen.verticalHeader().setVisible(False)
+        zuordnungen.horizontalHeader().setStretchLastSection(True)
+        for zeile, (gewerk, gebiete) in enumerate(sorted(eingabe.gebiete_je_gewerk.items())):
+            zuordnungen.setItem(zeile, 0, _item(gewerk))
+            zuordnungen.setItem(zeile, 1, _item(", ".join(sorted(gebiete))))
+        zuordnungen.resizeColumnsToContents()
+        zuordnungen.setMinimumHeight(min(260, 70 + 30 * len(eingabe.gebiete_je_gewerk)))
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Bitte prüfen Sie die folgenden Angaben:"))
+        layout.addLayout(form)
+        layout.addWidget(QLabel("Gewerke und Gebiete:"))
+        layout.addWidget(zuordnungen)
+
+        if ausgangseingabe is not None:
+            a_gewerke = set(ausgangseingabe.gebiete_je_gewerk)
+            n_gewerke = set(eingabe.gebiete_je_gewerk)
+            a_gebiete = self._zuordnungen(ausgangseingabe)
+            n_gebiete = self._zuordnungen(eingabe)
+            aenderungen = QFormLayout()
+            aenderungen.addRow("Hinzugefügte Gewerke:", self._wert_liste(n_gewerke - a_gewerke))
+            aenderungen.addRow("Entfernte Gewerke:", self._wert_liste(a_gewerke - n_gewerke))
+            aenderungen.addRow("Hinzugefügte Gebiete:", self._wert_liste(n_gebiete - a_gebiete))
+            aenderungen.addRow("Entfernte Gebiete:", self._wert_liste(a_gebiete - n_gebiete))
+            layout.addWidget(QLabel("Änderungen gegenüber dem geladenen Stand:"))
+            layout.addLayout(aenderungen)
+
+        buttons = QDialogButtonBox()
+        zurueck = buttons.addButton("Zurück zum Bearbeiten", QDialogButtonBox.ButtonRole.RejectRole)
+        speichern = buttons.addButton("Verbindlich speichern", QDialogButtonBox.ButtonRole.AcceptRole)
+        zurueck.clicked.connect(self.reject)
+        speichern.clicked.connect(self.accept)
+        speichern.setDefault(True)
+        layout.addWidget(buttons)
+
+    @staticmethod
+    def _wert(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        label.setWordWrap(True)
+        return label
+
+    @classmethod
+    def _wert_liste(cls, werte: set[str]) -> QLabel:
+        return cls._wert("\n".join(sorted(werte)) if werte else "–")
+
+    @staticmethod
+    def _zuordnungen(eingabe: UnternehmenEingabe) -> set[str]:
+        return {
+            f"{gewerk}: {gebiet}"
+            for gewerk, gebiete in eingabe.gebiete_je_gewerk.items()
+            for gebiet in gebiete
+        }
 
 
 class GewerkeListe(Bestandsliste):
