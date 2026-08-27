@@ -1,6 +1,8 @@
 # Dienstleisterkarten
 
-Lokale, deutschsprachige Windows-Anwendung zur Pflege von Dienstleistern und zum Export **genau eines Gewerks** als gruppiertes GeoJSON. Python 3.11+, PySide6, SQLite und pytest; keine Serververbindung.
+Lokale, deutschsprachige Windows-Anwendung zur Pflege von Dienstleistern. Python 3.11+, PySide6, SQLite und pytest; keine Serververbindung.
+
+Unternehmen lassen sich in der Bestandsliste neu anlegen oder bearbeiten. Änderungen werden erst über **Speichern** vorgemerkt und anschließend nach einer ausdrücklichen Rückfrage übernommen. Eine eigene Gewerke-, Export- oder Sicherungsseite gibt es nicht.
 
 ## Schnellstart
 
