@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QSignalBlocker, Qt, Signal
-from PySide6.QtGui import QColor, QFont
+import json
+
+from PySide6.QtCore import QPointF, Qt
+from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QGraphicsPathItem,
+    QGraphicsScene,
+    QGraphicsView,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -15,7 +20,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -34,6 +38,220 @@ def _item(text: object, sort_value: object | None = None) -> QTableWidgetItem:
     if sort_value is not None:
         item.setData(Qt.ItemDataRole.UserRole, sort_value)
     return item
+
+
+class _GebietsPfad(QGraphicsPathItem):
+    """Klickbares Kartenobjekt; die eigentliche Auswahl verwaltet das Widget."""
+
+    def __init__(self, schluessel: str, path: QPainterPath, umschalten):
+        super().__init__(path)
+        self.setData(0, schluessel)
+        self._umschalten = umschalten
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._umschalten(str(self.data(0)))
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
+class GebietsAuswahlWidget(QWidget):
+    """Barrierearm synchronisierte Gewerk-, Karten- und Gebietsauswahl."""
+
+    NICHT_AUSGEWAEHLT = QColor("#d7e3ea")
+    AUSGEWAEHLT = QColor("#25854a")
+    FOKUS = QColor("#f39c12")
+
+    def __init__(self, db: Database, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._auswahl: dict[str, set[str]] = {}
+        self._gebiete: dict[str, tuple[str, dict]] = {}
+        self._kartenobjekte: dict[str, QGraphicsPathItem] = {}
+        self._aktualisiere = False
+
+        self.gewerke = QListWidget()
+        self.gewerke.setAccessibleName("Zugeordnete Gewerke")
+        self.gewerke.setMinimumWidth(160)
+        self.gewerke.currentItemChanged.connect(self._gewerk_gewechselt)
+        self.gewerke.itemChanged.connect(self._gewerk_status_geaendert)
+
+        self.szene = QGraphicsScene(self)
+        self.karte = QGraphicsView(self.szene)
+        self.karte.setAccessibleName("Gebietskarte")
+        self.karte.setMinimumSize(360, 300)
+        self.karte.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        self.karte.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+
+        self.suche = QLineEdit()
+        self.suche.setPlaceholderText("Gebiet suchen …")
+        self.suche.setClearButtonEnabled(True)
+        self.suche.textChanged.connect(self._filtern)
+        self.gebietsliste = QListWidget()
+        self.gebietsliste.setAccessibleName("Gebiete auswählen")
+        self.gebietsliste.itemChanged.connect(self._gebiet_status_geaendert)
+        self.gebietsliste.currentItemChanged.connect(self._gebiet_fokussiert)
+        alle = QPushButton("Alle auswählen")
+        keine = QPushButton("Auswahl aufheben")
+        alle.clicked.connect(lambda: self._sichtbare_setzen(True))
+        keine.clicked.connect(lambda: self._sichtbare_setzen(False))
+        rechts = QVBoxLayout()
+        rechts.addWidget(self.suche)
+        rechts.addWidget(self.gebietsliste, 1)
+        rechts.addWidget(alle)
+        rechts.addWidget(keine)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.gewerke)
+        layout.addWidget(self.karte, 1)
+        layout.addLayout(rechts)
+        self._daten_laden()
+
+    @property
+    def auswahl(self) -> dict[str, set[str]]:
+        return {name: set(gebiete) for name, gebiete in self._auswahl.items()}
+
+    def set_auswahl(self, auswahl: dict[str, set[str]]) -> None:
+        self._auswahl = {name: set(gebiete) for name, gebiete in auswahl.items()}
+        bekannte = {self.gewerke.item(i).text() for i in range(self.gewerke.count())}
+        for name in sorted(self._auswahl, key=str.casefold):
+            if name not in bekannte:
+                self._gewerk_hinzufuegen(name)
+        self._aktualisiere = True
+        for i in range(self.gewerke.count()):
+            item = self.gewerke.item(i)
+            item.setCheckState(Qt.CheckState.Checked if item.text() in self._auswahl else Qt.CheckState.Unchecked)
+        self._aktualisiere = False
+        if self.gewerke.currentItem() is None and self.gewerke.count():
+            self.gewerke.setCurrentRow(0)
+        self._ansicht_aktualisieren()
+
+    def _daten_laden(self) -> None:
+        with self.db.connect() as con:
+            gewerke = con.execute("SELECT name FROM gewerke ORDER BY name COLLATE NOCASE").fetchall()
+            gebiete = con.execute(
+                "SELECT schluessel, anzeigename, geometrie FROM gebiete ORDER BY anzeigename COLLATE NOCASE, schluessel"
+            ).fetchall()
+        for (name,) in gewerke:
+            self._gewerk_hinzufuegen(name)
+        for schluessel, anzeigename, geometrie in gebiete:
+            geometry = json.loads(geometrie)
+            self._gebiete[schluessel] = (anzeigename, geometry)
+            tooltip = f"{schluessel} – {anzeigename}"
+            item = QListWidgetItem(tooltip)
+            item.setData(Qt.ItemDataRole.UserRole, schluessel)
+            item.setToolTip(tooltip)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            self.gebietsliste.addItem(item)
+            kartenobjekt = _GebietsPfad(schluessel, self._pfad(geometry), self._karte_umschalten)
+            kartenobjekt.setToolTip(tooltip)
+            kartenobjekt.setPen(QPen(QColor("#526773"), 0))
+            self.szene.addItem(kartenobjekt)
+            self._kartenobjekte[schluessel] = kartenobjekt
+        if self.szene.itemsBoundingRect().isValid():
+            self.karte.fitInView(self.szene.itemsBoundingRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        if self.gewerke.count():
+            self.gewerke.setCurrentRow(0)
+        self._ansicht_aktualisieren()
+
+    def _gewerk_hinzufuegen(self, name: str) -> None:
+        item = QListWidgetItem(name)
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        item.setCheckState(Qt.CheckState.Unchecked)
+        self.gewerke.addItem(item)
+
+    @staticmethod
+    def _pfad(geometry: dict) -> QPainterPath:
+        path = QPainterPath()
+        path.setFillRule(Qt.FillRule.OddEvenFill)
+        polygons = [geometry["coordinates"]] if geometry.get("type") == "Polygon" else geometry.get("coordinates", [])
+        for polygon in polygons:
+            for ring in polygon:
+                if not ring:
+                    continue
+                path.moveTo(QPointF(float(ring[0][0]), -float(ring[0][1])))
+                for coordinate in ring[1:]:
+                    path.lineTo(QPointF(float(coordinate[0]), -float(coordinate[1])))
+                path.closeSubpath()
+        return path
+
+    def _aktuelles_gewerk(self) -> str | None:
+        item = self.gewerke.currentItem()
+        return item.text() if item is not None else None
+
+    def _gewerk_gewechselt(self, *_args) -> None:
+        self._ansicht_aktualisieren()
+
+    def _gewerk_status_geaendert(self, item: QListWidgetItem) -> None:
+        if self._aktualisiere:
+            return
+        if item.checkState() == Qt.CheckState.Checked:
+            self._auswahl.setdefault(item.text(), set())
+            self.gewerke.setCurrentItem(item)
+        else:
+            self._auswahl.pop(item.text(), None)
+        self._ansicht_aktualisieren()
+
+    def _gebiet_status_geaendert(self, item: QListWidgetItem) -> None:
+        if self._aktualisiere:
+            return
+        gewerk = self._aktuelles_gewerk()
+        if gewerk is None:
+            return
+        self._auswahl.setdefault(gewerk, set())
+        self._aktualisiere = True
+        self.gewerke.currentItem().setCheckState(Qt.CheckState.Checked)
+        self._aktualisiere = False
+        schluessel = str(item.data(Qt.ItemDataRole.UserRole))
+        if item.checkState() == Qt.CheckState.Checked:
+            self._auswahl[gewerk].add(schluessel)
+        else:
+            self._auswahl[gewerk].discard(schluessel)
+        self._farben_aktualisieren()
+
+    def _karte_umschalten(self, schluessel: str) -> None:
+        for i in range(self.gebietsliste.count()):
+            item = self.gebietsliste.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == schluessel:
+                item.setCheckState(Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked else Qt.CheckState.Checked)
+                self.gebietsliste.setCurrentItem(item)
+                break
+
+    def _ansicht_aktualisieren(self) -> None:
+        ausgewaehlt = self._auswahl.get(self._aktuelles_gewerk() or "", set())
+        self._aktualisiere = True
+        for i in range(self.gebietsliste.count()):
+            item = self.gebietsliste.item(i)
+            item.setCheckState(Qt.CheckState.Checked if item.data(Qt.ItemDataRole.UserRole) in ausgewaehlt else Qt.CheckState.Unchecked)
+        self._aktualisiere = False
+        self._farben_aktualisieren()
+
+    def _farben_aktualisieren(self) -> None:
+        ausgewaehlt = self._auswahl.get(self._aktuelles_gewerk() or "", set())
+        fokus = self.gebietsliste.currentItem()
+        fokus_key = fokus.data(Qt.ItemDataRole.UserRole) if fokus else None
+        for schluessel, item in self._kartenobjekte.items():
+            farbe = self.FOKUS if schluessel == fokus_key else self.AUSGEWAEHLT if schluessel in ausgewaehlt else self.NICHT_AUSGEWAEHLT
+            item.setBrush(QBrush(farbe))
+
+    def _gebiet_fokussiert(self, *_args) -> None:
+        self._farben_aktualisieren()
+
+    def _filtern(self, text: str) -> None:
+        text = text.strip().casefold()
+        for i in range(self.gebietsliste.count()):
+            item = self.gebietsliste.item(i)
+            item.setHidden(text not in item.text().casefold())
+
+    def _sichtbare_setzen(self, auswaehlen: bool) -> None:
+        status = Qt.CheckState.Checked if auswaehlen else Qt.CheckState.Unchecked
+        for i in range(self.gebietsliste.count()):
+            item = self.gebietsliste.item(i)
+            if not item.isHidden():
+                item.setCheckState(status)
 
 
 class Bestandsliste(QWidget):
@@ -253,46 +471,19 @@ class UnternehmenDialog(QDialog):
         self.db = db
         self.unternehmen_id = unternehmen_id
         self.setWindowTitle("Unternehmen bearbeiten" if unternehmen_id is not None else "Unternehmen anlegen")
-        self.setMinimumWidth(520)
+        self.setMinimumSize(980, 560)
         self.name = QLineEdit()
         self.pps_nummer = QLineEdit()
         self.aktiv = QCheckBox("Aktiv")
         self.aktiv.setChecked(True)
-        self.gebiete_je_gewerk: dict[str, set[str]] = {}
-        self.gespeicherte_gebiete_je_gewerk: dict[str, set[str]] = {}
-        self.ausgewaehltes_gewerk: str | None = None
-        # Kompatibilität für Aufrufer der früheren Textfeld-API; das Feld wird
-        # nicht mehr angezeigt und nur bei explizit gesetztem Inhalt ausgewertet.
-        self.zuordnungen = QPlainTextEdit()
-
-        self.gewerke_liste = QListWidget()
-        self.gewerke_liste.setMinimumWidth(220)
-        self.gewerke_liste.currentItemChanged.connect(self._gewerk_gewechselt)
-        self.gewerk_hinzufuegen_button = QPushButton("Gewerk hinzufügen")
-        self.gewerk_entfernen_button = QPushButton("Gewerk entfernen")
-        self.neues_gewerk_button = QPushButton("Neues Gewerk anlegen")
-        self.gewerk_hinzufuegen_button.clicked.connect(self.gewerk_hinzufuegen)
-        self.gewerk_entfernen_button.clicked.connect(self.gewerk_entfernen)
-        self.neues_gewerk_button.clicked.connect(self.neues_gewerk_anlegen)
-
-        gewerke_seite = QVBoxLayout()
-        gewerke_seite.addWidget(QLabel("Gewerke"))
-        gewerke_seite.addWidget(self.gewerke_liste, 1)
-        gewerke_seite.addWidget(self.gewerk_hinzufuegen_button)
-        gewerke_seite.addWidget(self.gewerk_entfernen_button)
-        gewerke_seite.addWidget(self.neues_gewerk_button)
-
-        self.gebietsauswahl = GebietsauswahlWidget(db)
-        self.gebietsauswahl.auswahlGeaendert.connect(self._gebietsauswahl_geaendert)
-        zuordnungs_layout = QHBoxLayout()
-        zuordnungs_layout.addLayout(gewerke_seite)
-        zuordnungs_layout.addWidget(self.gebietsauswahl, 1)
+        self.gebietsauswahl = GebietsAuswahlWidget(db)
 
         form = QFormLayout()
         form.addRow("Unternehmen:", self.name)
         form.addRow("PPS-Nummer:", self.pps_nummer)
         form.addRow("Status:", self.aktiv)
-        hinweis = QLabel("Wählen Sie links ein Gewerk und rechts dessen Gebiete aus.")
+        form.addRow("Gewerke und Gebiete:", self.gebietsauswahl)
+        hinweis = QLabel("Gewerk links aktivieren, Gebiet per Karte oder Checkbox auswählen. Die Suche und Schaltflächen wirken auf die sichtbaren Gebiete.")
         hinweis.setWordWrap(True)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Save).setText("Speichern")
@@ -312,10 +503,10 @@ class UnternehmenDialog(QDialog):
         with self.db.connect() as con:
             row = con.execute("SELECT name, pps_nummer, aktiv FROM unternehmen WHERE id=?", (self.unternehmen_id,)).fetchone()
             zuordnungen = con.execute(
-                """SELECT g.name, group_concat(z.gebiet_schluessel, ', ')
+                """SELECT g.name, z.gebiet_schluessel
                    FROM unternehmen_gewerke ug JOIN gewerke g ON g.id=ug.gewerk_id
                    LEFT JOIN gebietszuordnungen z ON z.unternehmen_id=ug.unternehmen_id AND z.gewerk_id=ug.gewerk_id
-                   WHERE ug.unternehmen_id=? GROUP BY g.id ORDER BY g.name COLLATE NOCASE""",
+                   WHERE ug.unternehmen_id=? ORDER BY g.name COLLATE NOCASE, z.gebiet_schluessel""",
                 (self.unternehmen_id,),
             ).fetchall()
         if row is None:
@@ -324,113 +515,16 @@ class UnternehmenDialog(QDialog):
         self.name.setText(row[0])
         self.pps_nummer.setText(row[1])
         self.aktiv.setChecked(bool(row[2]))
-        self.gebiete_je_gewerk = {
-            r[0]: {gebiet.strip() for gebiet in (r[1] or "").split(",") if gebiet.strip()}
-            for r in zuordnungen
-        }
-        self.gespeicherte_gebiete_je_gewerk = {
-            name: set(gebiete) for name, gebiete in self.gebiete_je_gewerk.items()
-        }
-
-    def _gewerkliste_aktualisieren(self, auswaehlen: str | None = None) -> None:
-        auswaehlen = auswaehlen or self.ausgewaehltes_gewerk
-        with QSignalBlocker(self.gewerke_liste):
-            self.gewerke_liste.clear()
-            for name, gebiete in self.gebiete_je_gewerk.items():
-                einheit = "Gebiet" if len(gebiete) == 1 else "Gebiete"
-                item = QListWidgetItem(f"{name} · {len(gebiete)} {einheit}")
-                item.setData(Qt.ItemDataRole.UserRole, name)
-                if self.gespeicherte_gebiete_je_gewerk.get(name) != gebiete:
-                    font = QFont(item.font())
-                    font.setBold(True)
-                    item.setFont(font)
-                    item.setForeground(QColor("#b35c00"))
-                    item.setToolTip("Ungespeicherte Änderungen")
-                self.gewerke_liste.addItem(item)
-                if name == auswaehlen:
-                    self.gewerke_liste.setCurrentItem(item)
-        if self.gewerke_liste.currentItem() is None and self.gewerke_liste.count():
-            self.gewerke_liste.setCurrentRow(0)
-        self._gewerk_gewechselt(self.gewerke_liste.currentItem(), None)
-
-    def _gewerk_gewechselt(self, aktuell: QListWidgetItem | None, _vorher: QListWidgetItem | None) -> None:
-        self.ausgewaehltes_gewerk = aktuell.data(Qt.ItemDataRole.UserRole) if aktuell else None
-        self.gebietsauswahl.set_auswahl(self.gebiete_je_gewerk.get(self.ausgewaehltes_gewerk, set()))
-
-    def _gebietsauswahl_geaendert(self, gebiete: set[str]) -> None:
-        if self.ausgewaehltes_gewerk is None:
-            return
-        self.gebiete_je_gewerk[self.ausgewaehltes_gewerk] = set(gebiete)
-        self._gewerkliste_aktualisieren(self.ausgewaehltes_gewerk)
-
-    def gewerk_hinzufuegen(self) -> None:
-        with self.db.connect() as con:
-            namen = [
-                row[0]
-                for row in con.execute("SELECT name FROM gewerke WHERE aktiv=1 ORDER BY name COLLATE NOCASE")
-            ]
-        namen = [name for name in namen if name not in self.gebiete_je_gewerk]
-        if not namen:
-            QMessageBox.information(self, "Gewerk hinzufügen", "Es sind keine weiteren vorhandenen Gewerke verfügbar.")
-            return
-        dialog = GewerkAuswahlDialog(namen, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.auswahl:
-            self.gebiete_je_gewerk[dialog.auswahl] = set()
-            self._gewerkliste_aktualisieren(dialog.auswahl)
-
-    def neues_gewerk_anlegen(self) -> None:
-        name, ok = QInputDialog.getText(self, "Neues Gewerk anlegen", "Name des neuen Gewerks:")
-        name = name.strip()
-        if not ok or not name:
-            return
-        if any(name.casefold() == vorhanden.casefold() for vorhanden in self.gebiete_je_gewerk):
-            QMessageBox.information(self, "Neues Gewerk anlegen", "Dieses Gewerk wurde bereits hinzugefügt.")
-            return
-        with self.db.connect() as con:
-            vorhanden = con.execute("SELECT name FROM gewerke WHERE name=? COLLATE NOCASE", (name,)).fetchone()
-        if vorhanden:
-            QMessageBox.information(
-                self, "Neues Gewerk anlegen", "Dieses Gewerk ist bereits vorhanden. Verwenden Sie „Gewerk hinzufügen“."
-            )
-            return
-        self.gebiete_je_gewerk[name] = set()
-        self._gewerkliste_aktualisieren(name)
-
-    def gewerk_entfernen(self) -> None:
-        name = self.ausgewaehltes_gewerk
-        if name is None:
-            return
-        if self.gebiete_je_gewerk[name]:
-            antwort = QMessageBox.question(
-                self,
-                "Gewerk entfernen",
-                f"„{name}“ sind bereits Gebiete zugeordnet. Soll das Gewerk wirklich entfernt werden?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if antwort != QMessageBox.StandardButton.Yes:
-                return
-        del self.gebiete_je_gewerk[name]
-        self.ausgewaehltes_gewerk = None
-        self._gewerkliste_aktualisieren()
+        auswahl: dict[str, set[str]] = {}
+        for gewerk, gebiet in zuordnungen:
+            auswahl.setdefault(gewerk, set())
+            if gebiet is not None:
+                auswahl[gewerk].add(gebiet)
+        self.gebietsauswahl.set_auswahl(auswahl)
 
     def _eingabe(self) -> UnternehmenEingabe:
-        gebiete_je_gewerk = self.gebiete_je_gewerk
-        if self.zuordnungen.toPlainText().strip():
-            gebiete_je_gewerk = {}
-            for nummer, zeile in enumerate(self.zuordnungen.toPlainText().splitlines(), 1):
-                if not zeile.strip():
-                    continue
-                if ":" not in zeile:
-                    raise Validierungsfehler(
-                        f"In Zeile {nummer} fehlt der Doppelpunkt zwischen Gewerk und Gebieten."
-                    )
-                gewerk, gebiete = zeile.split(":", 1)
-                gebiete_je_gewerk[gewerk.strip()] = {
-                    gebiet.strip() for gebiet in gebiete.split(",") if gebiet.strip()
-                }
         return UnternehmenEingabe(
-            self.name.text(), self.pps_nummer.text(), self.aktiv.isChecked(), gebiete_je_gewerk
+            self.name.text(), self.pps_nummer.text(), self.aktiv.isChecked(), self.gebietsauswahl.auswahl
         )
 
     def speichern(self) -> None:
