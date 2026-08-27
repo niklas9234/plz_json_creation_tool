@@ -7,7 +7,7 @@ from app.datenbank.gebiete import ausgelieferte_gebietsdateien, lade_gebiete
 def main():
     try:
         from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QLabel
-        from app.ui.bestandslisten import GewerkeListe, UnternehmenListe
+        from app.ui.bestandslisten import UnternehmenListe
     except ImportError:
         print("PySide6 fehlt. Installieren Sie die Abhängigkeiten mit: pip install .", file=sys.stderr); return 1
     paths=ensure_directories(); db=Database(paths['daten']/ 'dienstleister.db'); db.initialize()
@@ -16,13 +16,9 @@ def main():
     app=QApplication(sys.argv); app.setApplicationName('Dienstleisterkarten')
     window=QMainWindow(); window.setWindowTitle('Dienstleisterkarten'); window.resize(1000,700)
     tabs=QTabWidget()
-    pages={
-      'Unternehmen':UnternehmenListe(db),
-      'Gewerke':GewerkeListe(db)}
+    pages={'Unternehmen':UnternehmenListe(db)}
     texts={
-      'Export':'Wählen Sie genau ein Gewerk für den GeoJSON-Export.',
-      'Sicherung und Wiederherstellung':'Datenbank manuell sichern oder nach Bestätigung wiederherstellen.',
-      'Informationen':'Dienstleisterkarten – vollständig offline.'}
+      'Informationen':'Dienstleisterkarten – Inhalte lokal anzeigen und bearbeiten.'}
     for title,page in pages.items():
         tabs.addTab(page,title)
     for title,text in texts.items():

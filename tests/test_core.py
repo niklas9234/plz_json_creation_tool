@@ -110,3 +110,24 @@ def test_bestandslisten_zeigen_importierte_daten(tmp_path, monkeypatch):
  assert gewerke.tabelle.rowCount()==1
  assert [gewerke.tabelle.item(0,column).text() for column in range(4)]==['Kran','Ja','1','2']
  unternehmen.deleteLater(); gewerke.deleteLater(); app.processEvents()
+
+def test_unternehmen_editor_speichert_erst_nach_bestaetigung(tmp_path, monkeypatch):
+ monkeypatch.setenv('QT_QPA_PLATFORM','offscreen')
+ pytest.importorskip('PySide6')
+ from PySide6.QtWidgets import QApplication, QMessageBox
+ from app.ui.bestandslisten import UnternehmenDialog
+ app=QApplication.instance() or QApplication([])
+ db=database(tmp_path)
+ dialog=UnternehmenDialog(db,None)
+ dialog.name.setText('Neue Firma')
+ dialog.pps_nummer.setText('007')
+ dialog.zuordnungen.setPlainText('Kran: 04, LUX')
+ monkeypatch.setattr(QMessageBox,'question',lambda *args,**kwargs: QMessageBox.StandardButton.No)
+ dialog.speichern()
+ with db.connect() as con: assert con.execute('select count(*) from unternehmen').fetchone()[0]==0
+ monkeypatch.setattr(QMessageBox,'question',lambda *args,**kwargs: QMessageBox.StandardButton.Yes)
+ dialog.speichern()
+ with db.connect() as con:
+  assert con.execute('select name,pps_nummer from unternehmen').fetchone()==('Neue Firma','007')
+  assert {row[0] for row in con.execute('select gebiet_schluessel from gebietszuordnungen')}=={'04','LUX'}
+ dialog.deleteLater(); app.processEvents()
